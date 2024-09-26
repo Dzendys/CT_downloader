@@ -1,21 +1,34 @@
 """CT module"""
 import json
 import os
+import sys
 import requests
 from bs4 import BeautifulSoup, Tag
 from downloadM3u8 import M3U8, M3U8Index
 import asyncio
 
+class CT_Error(Exception):
+    """CT error"""
+    def __init__(self, message:str, details:str | None = None) -> None:
+        """Initializies ``CT_Error`` class"""
+        super().__init__(message)
+        self.details:str | None = details
+
+
 class CT:
     """CT downloader
     - can download video only using url (noob friendly)"""
+
+    VALID_URLS:str = ["https://www.ceskatelevize.cz/"]
+
     def __init__(self, url:str, directory:str, name:str | None = None) -> None:
         """Initializies ``CT`` class"""
-        self.url:str = url
-        self.directory:str = directory
-        self.ct_name:str = ""
-        self.id: str = self.getID()
-        self.name:str = self.getName(name=name)
+        self.url:str = self._getUrl(url=url)
+        self.source_code: BeautifulSoup = self._getSourceCode()
+        self.directory:str = self._getDirectory(directory=directory)
+        self.name:str = self._getName(name=name)
+        self.id: str = self._getID()
+        
         self.playlist_info:dict = self.getPlaylistInfo()
         self.subtitles_url:str | None = self.trySubs()
         self.playlist_url = self.getPlaylistUrl()
@@ -23,6 +36,60 @@ class CT:
                                 directory=self.directory,
                                 name=self.name)
         print("Inicializace proběhla úsěšně!")
+
+    def _getUrl(self, url:str) -> str:
+        """Checks url and returns it if it's valid"""
+        print("Kontrola url...")
+        for valid_url in self.VALID_URLS:
+            if url.startswith(valid_url):
+                return url
+        raise CT_Error("Neplatná url.")
+
+    def _getSourceCode(self) -> BeautifulSoup:
+        """Gets source code of the page"""
+        print("Stahování informací z webu...")
+        response:requests.Response = requests.get(self.url)
+        if response.status_code != 200:
+            raise CT_Error(f"Nemohl jsem se dostat na web. Zkontroluj připojení k internetu nebo správnost url.",response.status_code)
+        return BeautifulSoup(response.text, 'html.parser')
+    
+    def _getDirectory(self, directory:str) -> str:
+        """Checks directory and creates it if it doesn't exist"""
+        print("Kontrola existence složky...")
+        if not os.path.exists(directory):
+            print("Složka neexistuje, vytvářím novou...")
+            try:
+                os.makedirs(directory)
+            except Exception as e:
+                raise CT_Error(f"Nepodařilo se mi vytvořit složku. {e}")
+        return directory
+
+    def _getName (self, name:str | None) -> str:
+        """Gets name of the video on CT"""
+        if self.name is None or self.name == "":
+            print("Hledám jméno videa...")
+            try:
+                script:Tag = self.source_code.find_all('script', {'type': 'application/ld+json'})[1]
+            except IndexError:
+                raise CT_Error("Nenašel jsem jméno videa.")
+            except Exception as e:
+                raise CT_Error(f"Hledání jména selhalo. Struktura stránky se mohla změnit", e)
+            contents:dict = json.loads(script.contents[0])
+            return contents["name"]
+        return name
+
+    def _getID(self) -> str:
+        """Gets id of the video and also changes CT name to proper name"""
+        print("Zjišťuji ID videa...")
+        try:
+            script:Tag = self.source_code.find_all('script', {'type': 'application/ld+json'})[1]
+        except IndexError:
+            raise CT_Error("Nenašel jsem ID videa.")
+        except Exception as e:
+            raise CT_Error(f"Hledání ID selhalo. Struktura stránky se mohla změnit", e)
+        contents:dict = json.loads(script.contents[0])
+        embed_url:str = contents["video"]["embedUrl"]
+        return embed_url.split("IDEC=")[1]
 
     def download(self, subs: bool = False) -> None:
         """Downloads video stream in best quality and converts it"""
@@ -71,27 +138,6 @@ class CT:
         """Gets ``playlist url`` using requests"""
         return self.playlist_info["streamUrls"]["main"]
 
-    def getID(self) -> str:
-        """Gets id of the video and also changes CT name to proper name"""
-        print("Zjišťuji ID videa...")
-        response:requests.Response = requests.get(self.url)
-        soup:BeautifulSoup = BeautifulSoup(response.text, 'html.parser')
-        try:
-            script:Tag = soup.find_all('script', {'type': 'application/ld+json'})[1]
-        except IndexError:
-            print("Nenašel jsem video!")
-            return
-        contents:dict = json.loads(script.contents[0])
-        self.ct_name = contents["name"]
-        embed_url:str = contents["video"]["embedUrl"]
-        return embed_url.split("IDEC=")[1]
-
-    def getName(self, name:str | None) -> str:
-        """Gets name of the video on CT"""
-        if name is not None and name != "":
-            return name
-        return self.ct_name
-
     def trySubs(self) -> str | None:
         """Tries to fetch subtitles url"""
         try:
@@ -127,3 +173,4 @@ class CT:
                     continue
                 srt_file += line+"\n"
         return srt_file
+        
