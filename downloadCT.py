@@ -28,10 +28,10 @@ class CT:
         self.directory:str = self._getDirectory(directory=directory)
         self.name:str = self._getName(name=name)
         self.id: str = self._getID()
+        self.playlist_info:dict = self._getPlaylistInfo()
+        self.playlist_url = self._getPlaylistUrl()
+        self.subtitles_urls: list[str,str] | list[None] = self._getSubs()
         
-        self.playlist_info:dict = self.getPlaylistInfo()
-        self.subtitles_url:str | None = self.trySubs()
-        self.playlist_url = self.getPlaylistUrl()
         self.video: M3U8 = M3U8(playlist_url=self.playlist_url,
                                 directory=self.directory,
                                 name=self.name)
@@ -64,61 +64,56 @@ class CT:
                 raise CT_Error(f"Nepodařilo se mi vytvořit složku. {e}")
         return directory
 
-    def _getName (self, name:str | None) -> str:
+    def _getName(self, name:str | None) -> str:
         """Gets name of the video on CT"""
-        if self.name is None or self.name == "":
-            print("Hledám jméno videa...")
+        if name is None or name == "":
             try:
-                script:Tag = self.source_code.find_all('script', {'type': 'application/ld+json'})[1]
-            except IndexError:
-                raise CT_Error("Nenašel jsem jméno videa.")
-            except Exception as e:
-                raise CT_Error(f"Hledání jména selhalo. Struktura stránky se mohla změnit", e)
-            contents:dict = json.loads(script.contents[0])
-            return contents["name"]
+                return self._getNameFromPlaylistInfo()
+            except CT_Error as e:
+                return self._getNameFromSourceCode()
         return name
 
+    def _getNameFromPlaylistInfo(self) -> str:
+        """Gets name of the video on CT"""
+        print("Hledám jméno videa v playlistu...")
+        try:
+            return self.playlist_info["title"]
+        except Exception as e:
+            raise CT_Error("Nepodařilo se najít jméno videa v playlistu.", e)
+    
+    def _getNameFromSourceCode (self) -> str:
+        """Gets name of the video on CT"""
+        print("Hledám jméno videa na webu...")
+        try:
+            script:Tag = self.source_code.find_all('script', {'type': 'application/ld+json'})[1]
+        except IndexError:
+            raise CT_Error("Nenašel jsem jméno videa.")
+        except Exception as e:
+            raise CT_Error(f"Hledání jména selhalo. Struktura stránky se mohla změnit", e)
+        contents:dict = json.loads(script.contents[0])
+        return contents["name"]
+
     def _getID(self) -> str:
-        """Gets id of the video and also changes CT name to proper name"""
+        """Gets id of the video"""
         print("Zjišťuji ID videa...")
         try:
             script:Tag = self.source_code.find_all('script', {'type': 'application/ld+json'})[1]
         except IndexError:
-            raise CT_Error("Nenašel jsem ID videa.")
+            raise CT_Error("Nenašel jsem ID-script v source codu.")
         except Exception as e:
-            raise CT_Error(f"Hledání ID selhalo. Struktura stránky se mohla změnit", e)
-        contents:dict = json.loads(script.contents[0])
-        embed_url:str = contents["video"]["embedUrl"]
-        return embed_url.split("IDEC=")[1]
+            raise CT_Error(f"Hledání ID-scriptu selhalo. Struktura stránky se mohla změnit", e)
+        try:
+            contents:dict = json.loads(script.contents[0])
+            embed_url:str = contents["video"]["embedUrl"]
+            return embed_url.split("IDEC=")[1]
+        except ValueError:
+            raise CT_Error("Nenašel jsem id ve scriptu.")
+        except Exception as e:
+            raise CT_Error("Hledání ID selhalo. Struktura skriptu se mohla změnit.", e) 
 
-    def download(self, subs: bool = False) -> None:
-        """Downloads video stream in best quality and converts it"""
-        #loop = asyncio.get_event_loop()
-        #loop.run_until_complete(self.video.asyncDownload(self.video.get_best_stream()))
-        print("Začíná stahování segmentů...")
-        stream:M3U8Index = self.video.get_best_stream()
-        contents: str = requests.get(stream.url).text
-        self.video._make_tempdir()
-        os.chdir(self.video.temp_directory)
-        for line in contents.split("\n"):
-            if line.startswith("http"):
-                with open(f"{self.video.name}{self.video.extention_in}", "ab") as f:
-                    f.write(requests.get(line).content)
-        self.video._convert(remove=True)
-        if subs:
-            self._downloadSubs()
-
-    def _downloadSubs(self) -> None:
-        """Downloads subs"""
-        if self.subtitles_url is None:
-            print("Titulky nejsou k dispozici!")
-            return
-        with open(os.path.join(self.directory, self.video.name+".srt"), "w") as f:
-            f.write(self.txtToSrt(requests.get(self.subtitles_url).content.decode()))
-        print("Titulky staženy!")
-
-    def getPlaylistInfo(self) -> dict:
+    def _getPlaylistInfo(self) -> dict:
         """Returns dictionary full of information about video"""
+        print("Zjišťuji klíč k lokaci playlistu...")
         data = {
             'playlist[0][type]': 'episode',
             'playlist[0][id]': self.id,
@@ -128,24 +123,60 @@ class CT:
             'canPlayDRM': 'true',
             'streamingProtocol': 'dash',
         }
-        r1 = requests.post('https://www.ceskatelevize.cz/ivysilani/ajax/get-client-playlist/', data=data)
-        a = json.loads(r1.text)
-        r2 = requests.get(a["url"])
-        b = json.loads(r2.text)
-        return b["playlist"][-1]
-
-    def getPlaylistUrl(self) -> str:
-        """Gets ``playlist url`` using requests"""
-        return self.playlist_info["streamUrls"]["main"]
-
-    def trySubs(self) -> str | None:
-        """Tries to fetch subtitles url"""
         try:
-            return self.playlist_info["subtitles"][0]["url"]
-        except KeyError:
-            return None
+            r1 = requests.post('https://www.ceskatelevize.cz/ivysilani/ajax/get-client-playlist/', data=data)
+            a = json.loads(r1.text)
+            r2 = requests.get(a["url"])
+            b = json.loads(r2.text)
+            return b["playlist"][-1]
+        except Exception as e:
+            raise CT_Error(f"Nepodařilo se získat adresu videa na serveru.", e)
 
-    def txtToSrt(self, source:str) -> str:
+    def _getPlaylistUrl(self) -> str:
+        """Gets ``playlist url``"""
+        print("Zjišťuji url adresu playlistu...")
+        try:
+            return self.playlist_info["streamUrls"]["main"]
+        except ValueError:
+            raise CT_Error("Nepodařilo se proparsovat url adresu videa z playlistu.")
+        except Exception as e:
+            raise CT_Error(f"Parsování url adresy playlistu selhalo. Struktura playlistu se mohla změnit", e)
+    
+    def _getSubs(self) -> list[str,str] | list[None]:
+        """Fetches subtitles urls"""
+        try:
+            return [[sub["title"], sub["url"]] for sub in self.playlist_info["subtitles"]]
+        except Exception as e:
+            raise CT_Error(f"Nepodařilo načíst url adresy titulků.", e)
+    
+    def download(self, subs: bool = False, convert: bool = True) -> None:
+        """Downloads video stream in best quality and converts it"""
+        print("Začíná stahování segmentů...")
+        stream:M3U8Index = self.video.get_best_stream()
+        contents: str = requests.get(stream.url).text
+        self.video._make_tempdir()
+        os.chdir(self.video.temp_directory)
+        for line in contents.split("\n"):
+            if line.startswith("http"):
+                with open(f"{self.video.name}{self.video.extention_in}", "ab") as f:
+                    f.write(self.video._downloadSegment(line))
+        if convert:
+            self.video._convert(remove=True)
+        if subs:
+            self._downloadSubs()
+
+    def _downloadSubs(self) -> None:
+        """Downloads subs"""
+        print("Stahování titulků...")
+        if len(self.subtitles_urls) ==0:
+            print("Titulky nejsou k dispozici!")
+            return
+        for sub_name, sub_url in self.subtitles_urls:
+            with open(os.path.join(self.directory, self.video.name + f" ({sub_name})" + ".srt"), "w") as f:
+                f.write(self._txtToSrt(requests.get(sub_url).content.decode()))
+            print(f"Stažené titulky: {sub_name}.")   
+
+    def _txtToSrt(self, source:str) -> str:
         """Converts subtitle contents into ``srt`` format"""
         def seconds(milliseconds:str) -> str:
             """Converts miliseconds to ``srt format``"""
@@ -173,4 +204,3 @@ class CT:
                     continue
                 srt_file += line+"\n"
         return srt_file
-        
