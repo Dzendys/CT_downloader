@@ -1,3 +1,4 @@
+import subprocess
 import requests
 import shutil
 import os
@@ -136,7 +137,8 @@ class M3U8:
             '-c:v', 'copy','-c:a', 'copy',
             f"\"{os.path.join(self.directory, self.name+self.extention_out)}\""
         ]
-        os.system(" ".join(command))
+        subprocess.check_call(" ".join(command))
+        #os.system(" ".join(command)) #does not work correctly with ffmpeg
         if remove:
             self._remove_tempdir()
 

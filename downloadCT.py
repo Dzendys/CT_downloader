@@ -1,11 +1,9 @@
 """CT module"""
 import json
 import os
-import sys
 import requests
 from bs4 import BeautifulSoup, Tag
 from downloadM3u8 import M3U8, M3U8Index
-import asyncio
 
 class CT_Error(Exception):
     """CT error"""
@@ -13,7 +11,6 @@ class CT_Error(Exception):
         """Initializies ``CT_Error`` class"""
         super().__init__(message)
         self.details:str | None = details
-
 
 class CT:
     """CT downloader
@@ -26,10 +23,10 @@ class CT:
         self.url:str = self._getUrl(url=url)
         self.source_code: BeautifulSoup = self._getSourceCode()
         self.directory:str = self._getDirectory(directory=directory)
-        self.name:str = self._getName(name=name)
         self.id: str = self._getID()
         self.playlist_info:dict = self._getPlaylistInfo()
         self.playlist_url = self._getPlaylistUrl()
+        self.name:str = self._getName(name=name)
         self.subtitles_urls: list[str,str] | list[None] = self._getSubs()
         
         self.video: M3U8 = M3U8(playlist_url=self.playlist_url,
@@ -63,35 +60,6 @@ class CT:
             except Exception as e:
                 raise CT_Error(f"Nepodařilo se mi vytvořit složku. {e}")
         return directory
-
-    def _getName(self, name:str | None) -> str:
-        """Gets name of the video on CT"""
-        if name is None or name == "":
-            try:
-                return self._getNameFromPlaylistInfo()
-            except CT_Error as e:
-                return self._getNameFromSourceCode()
-        return name
-
-    def _getNameFromPlaylistInfo(self) -> str:
-        """Gets name of the video on CT"""
-        print("Hledám jméno videa v playlistu...")
-        try:
-            return self.playlist_info["title"]
-        except Exception as e:
-            raise CT_Error("Nepodařilo se najít jméno videa v playlistu.", e)
-    
-    def _getNameFromSourceCode (self) -> str:
-        """Gets name of the video on CT"""
-        print("Hledám jméno videa na webu...")
-        try:
-            script:Tag = self.source_code.find_all('script', {'type': 'application/ld+json'})[1]
-        except IndexError:
-            raise CT_Error("Nenašel jsem jméno videa.")
-        except Exception as e:
-            raise CT_Error(f"Hledání jména selhalo. Struktura stránky se mohla změnit", e)
-        contents:dict = json.loads(script.contents[0])
-        return contents["name"]
 
     def _getID(self) -> str:
         """Gets id of the video"""
@@ -141,13 +109,42 @@ class CT:
             raise CT_Error("Nepodařilo se proparsovat url adresu videa z playlistu.")
         except Exception as e:
             raise CT_Error(f"Parsování url adresy playlistu selhalo. Struktura playlistu se mohla změnit", e)
+
+    def _getName(self, name:str | None) -> str:
+        """Gets name of the video on CT"""
+        if name is None or name == "":
+            try:
+                return self._getNameFromPlaylistInfo()
+            except CT_Error as e:
+                return self._getNameFromSourceCode()
+        return name
+
+    def _getNameFromPlaylistInfo(self) -> str:
+        """Gets name of the video from playlist"""
+        print("Hledám název videa v playlistu...")
+        try:
+            return self.playlist_info["title"]
+        except Exception as e:
+            raise CT_Error("Nepodařilo se najít jméno videa v playlistu.", e)
     
+    def _getNameFromSourceCode (self) -> str:
+        """Gets name of the video from web"""
+        print("Hledám název videa na webu...")
+        try:
+            script:Tag = self.source_code.find_all('script', {'type': 'application/ld+json'})[1]
+        except IndexError:
+            raise CT_Error("Nenašel jsem jméno videa.")
+        except Exception as e:
+            raise CT_Error(f"Hledání jména selhalo. Struktura stránky se mohla změnit", e)
+        contents:dict = json.loads(script.contents[0])
+        return contents["name"]
+
     def _getSubs(self) -> list[str,str] | list[None]:
         """Fetches subtitles urls"""
         try:
             return [[sub["title"], sub["url"]] for sub in self.playlist_info["subtitles"]]
-        except Exception as e:
-            raise CT_Error(f"Nepodařilo načíst url adresy titulků.", e)
+        except Exception:
+            return []
     
     def download(self, subs: bool = False, convert: bool = True) -> None:
         """Downloads video stream in best quality and converts it"""
@@ -161,6 +158,7 @@ class CT:
                 with open(f"{self.video.name}{self.video.extention_in}", "ab") as f:
                     f.write(self.video._downloadSegment(line))
         if convert:
+            print("Začíní konvertování segmentů...")
             self.video._convert(remove=True)
         if subs:
             self._downloadSubs()
@@ -204,3 +202,57 @@ class CT:
                     continue
                 srt_file += line+"\n"
         return srt_file
+
+
+class CT_Gold(CT):
+    """CT Gold downloader
+    - can download video only using url (noob friendly)"""
+
+    VALID_URLS:str = ["https://zlatapraha.ceskatelevize.cz/"]
+
+    def __init__(self, url: str, directory: str, name: str | None = None) -> None:
+        super().__init__(url, directory, name)
+
+    def _getPlaylistInfo(self) -> dict:
+        """Returns dictionary full of information about video"""
+        print("Zjišťuji klíč k lokaci playlistu...")
+        data = {
+            'playlist[0][type]': 'bonus',
+            'playlist[0][id]': self.id,
+            'requestUrl': '/ivysilani/embed/iFramePlayer.php',
+            'requestSource': 'iVysilani',
+            'type': 'html',
+            'canPlayDRM': 'true',
+        }
+        try:
+            r1 = requests.post('https://www.ceskatelevize.cz/ivysilani/ajax/get-client-playlist/', data=data)
+            a = json.loads(r1.text)
+            r2 = requests.get(a["url"])
+            b = json.loads(r2.text)
+            return b["playlist"][-1]
+        except Exception as e:
+            raise CT_Error(f"Nepodařilo se získat adresu videa na serveru.", e)
+
+    def _getNameFromSourceCode(self) -> str:
+        """Gets name of the video from web"""
+        print("Hledám název videa na webu...")
+        try:
+            title:Tag = self.source_code.find('title')
+            self.ct_name = title.text.split("|")[0].strip()
+        except ValueError:
+            raise CT_Error("Nedokázal jsem proparsovat název videa ze source codu.")
+        except Exception as e:
+            raise CT_Error("Hledání jména ze source codu selhalo. Struktura stránky se mohla změnit.", e)
+    
+    def _getID(self) -> str:
+        """Gets id of the video"""
+        print("Zjišťuji ID videa...")
+        try:
+            iframes:Tag = self.source_code.find_all('iframe')
+            for iframe in iframes:
+                if iframe['src'].startswith("https://www.ceskatelevize.cz/ivysilani/embed/iFramePlayer.php?"):
+                    return iframe['src'].split("bonus=")[1][:5]
+        except ValueError:
+            raise CT_Error("Nedokázal jsem proparsovat ID videa ze source codu.")
+        except Exception as e:
+            raise CT_Error("Hledání ID videa selhalo. Struktura stránky se mohla změnit.", e)
