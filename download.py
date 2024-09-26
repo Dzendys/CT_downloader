@@ -1,5 +1,5 @@
 import sys
-from downloadCT import CT, CT_Gold
+from downloadCT import CT, CT_Gold, CT_Error
 from tkinter.filedialog import askdirectory
 
 
@@ -31,5 +31,8 @@ elif URL.startswith("https://zlatapraha.ceskatelevize.cz/"): #GOLD
 if NAME == " " or NAME == "":
     NAME = None
 
-ct.download(subs=True, convert=CONVERT)
+try:
+    ct.download(subs=True, convert=CONVERT)
+except CT_Error as e:
+    print(f"Nastala chyba!\n{e}\nDetail: {e.details}\n\nZavolej Honzu!")
 input()
