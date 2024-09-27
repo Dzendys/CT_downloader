@@ -17,6 +17,11 @@ print("Konvertovat z .ts do .mp4? Oba formáty jsou podporovány základními p�
 if input().upper() == "Y":
     CONVERT = True
 
+SUBS:bool = False
+print("Stáhnout titulky? Y/N")
+if input().upper() == "Y":
+    SUBS = True
+
 if DIRECTORY=="":
     print("Špatná složka!")
     input()	
@@ -32,7 +37,7 @@ if NAME == " " or NAME == "":
     NAME = None
 
 try:
-    ct.download(subs=True, convert=CONVERT)
+    ct.download(subs=SUBS, convert=CONVERT)
 except CT_Error as e:
     print(f"Nastala chyba!\n{e}\nDetail: {e.details}\n\nZavolej Honzu!")
 input()
