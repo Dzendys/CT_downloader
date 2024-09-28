@@ -1,7 +1,9 @@
 """CT module"""
 import json
 import os
+from prettytable import PrettyTable
 import requests
+import shutil
 from bs4 import BeautifulSoup, Tag
 from downloadM3u8 import M3U8, M3U8Index
 
@@ -33,6 +35,23 @@ class CT:
                                 directory=self.directory,
                                 name=self.name)
         print("Inicializace proběhla úsěšně!")
+
+    def displayInfo(self, clear_terminal:bool = False) -> None:
+        """Displays info about video"""
+        t:PrettyTable = PrettyTable()
+        t.align = "l"
+        t.header = False
+        t.add_row(["\033[1mNázev videa\033[0m", self.name])
+        t.add_row(["\033[1mURL videa\033[0m", self.url])
+        #t.add_row(["URL playlistu", c.playlist_url])
+        t.add_row(["\033[1mUmístění\033[0m", self.directory])
+        if len(self.subtitles_urls) > 0:
+            t.add_row(["\033[1mTitulky\033[0m", ", ".join(sub_name for sub_name, _ in self.subtitles_urls)])
+        else:
+            t.add_row(["\033[1mTitulky\033[0m", "Nejsou k dispozici"])
+        if clear_terminal:
+            print("\033[H\033[J", end="")
+        print(t)
 
     def _getUrl(self, url:str) -> str:
         """Checks url and returns it if it's valid"""
@@ -160,6 +179,13 @@ class CT:
         if convert:
             print("Začíní konvertování segmentů...")
             self.video._convert(remove=True)
+        else:
+            try:
+                shutil.move(os.path.join(self.video.temp_directory, self.video.name+self.video.extention_in),
+                            os.path.join(self.directory, self.video.name+self.video.extention_in))
+                self.video._remove_tempdir()
+            except Exception as e:
+                raise CT_Error("Nepodařilo se soubor přesunout z dočasné složky.", e)
         if subs:
             self._downloadSubs()
 
