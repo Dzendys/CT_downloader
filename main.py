@@ -9,6 +9,9 @@ URL:str = input()
 print("Napiš jméno nebo potvrď prázdné a vyberese jméno z portálu ČT:")
 NAME:str | None = input()
 
+if NAME == " " or NAME == "":
+    NAME = None
+
 print("Vyber výstupovou složku:")
 DIRECTORY:str = askdirectory()
 
@@ -33,8 +36,7 @@ if URL.startswith("https://www.ceskatelevize.cz"): #NORMAL
 elif URL.startswith("https://zlatapraha.ceskatelevize.cz/"): #GOLD
     ct:CT_Gold = CT_Gold(url=URL, directory=DIRECTORY, name=NAME)
 
-if NAME == " " or NAME == "":
-    NAME = None
+ct.displayInfo()
 
 try:
     ct.download(subs=SUBS, convert=CONVERT)
