@@ -43,7 +43,7 @@ class Media:
 
     def _downloadIS(self) -> None:
         """Downloads IS"""
-        rIS = requests.get(self.base_url + self.id + "/" + f"IS.mp4")
+        rIS = requests.get(self.base_url + self.id + "/" + f"IS.mp4", timeout=60)
         if rIS.status_code != 200:
             raise CT_Error(f"Can't get IS. Status code: {rIS.status_code}")
         try:
@@ -54,7 +54,7 @@ class Media:
 
     def _downloadSegment(self, index: int) -> None:
         """Downloads segment"""
-        rSegment = requests.get(f"{self.base_url}/{self.id}/{index:06d}.m4s")
+        rSegment = requests.get(f"{self.base_url}/{self.id}/{index:06d}.m4s", timeout=60)
         if rSegment.status_code != 200:
             raise CT_Error(
                 f"Can't get segment #{index}. Status code: {rSegment.status_code}"
@@ -128,7 +128,7 @@ class Subtitle:
         """Downloads subtitle"""
         os.makedirs(directory, exist_ok=True)
         os.chdir(directory)
-        rSub = requests.get(self.url)
+        rSub = requests.get(self.url, timeout=60)
         if rSub.status_code != 200:
             raise CT_Error(f"Can't get subtitle. Status code: {rSub.status_code}")
         try:
@@ -265,7 +265,7 @@ class CT:
 
     def _getSourceCode(self) -> BeautifulSoup:
         """Gets source code of the page"""
-        response: requests.Response = requests.get(self.url)
+        response: requests.Response = requests.get(self.url, timeout=60)
         if response.status_code != 200:
             raise CT_Error(
                 f"Nemohl jsem se dostat na web. Zkontroluj připojení k internetu nebo správnost url.",
@@ -306,7 +306,7 @@ class CT:
     def _getPlaylistInfo(self) -> dict:
         """Returns dictionary full of information about video"""
         try:
-            r = requests.get(self.PLAYLIST_INFO + self.id)
+            r = requests.get(self.PLAYLIST_INFO + self.id, timeout=60)
             return json.loads(r.text)
         except Exception as e:
             raise CT_Error(f"Nepodařilo se získat adresu videa na serveru.", e)
@@ -339,7 +339,7 @@ class CT:
     def _getMPD(self) -> MPDParser:
         """Returns MPDParser object"""
         mpd_link: str = self.playlist_info["streams"][-1]["url"]
-        r = requests.get(mpd_link)
+        r = requests.get(mpd_link, timeout=60)
         if r.status_code != 200:
             raise CT_Error(f"Can't get mpd file. Status code: {r.status_code}")
         return MPDParser(r.text)
