@@ -54,7 +54,9 @@ class Media:
 
     def _downloadSegment(self, index: int) -> None:
         """Downloads segment"""
-        rSegment = requests.get(f"{self.base_url}/{self.id}/{index:06d}.m4s", timeout=60)
+        rSegment = requests.get(
+            f"{self.base_url}/{self.id}/{index:06d}.m4s", timeout=60
+        )
         if rSegment.status_code != 200:
             raise CT_Error(
                 f"Can't get segment #{index}. Status code: {rSegment.status_code}"
@@ -220,8 +222,15 @@ class CT:
         self.directory: str = self._getDirectory(directory=directory)
         self.id: str = self._getID()
         self.playlist_info: dict = self._getPlaylistInfo()
+        self.drm_protection: bool = self._checkDRM()
         self.name: str = self._getName(name=name)
         self.valid_name: str = self._getValidName(self.name)
+        if self.drm_protection:
+            self.subtitles: list[Subtitle] = []
+            self.mpd_parser: MPDParser = None
+            self.audios: list[Audio] = []
+            self.videos: list[Video] = []
+            return
         self.subtitles: list[Subtitle] = self._getSubs()
         self.mpd_parser: MPDParser = self._getMPD()
         self.audios: list[Audio] = sorted(
@@ -252,6 +261,12 @@ class CT:
             )
         else:
             t.add_row(["\033[1mTitulky\033[0m", "Nejsou k dispozici"])
+        t.add_row(
+            [
+                "\033[1mDRM\033[0m",
+                "Ano (nelze stáhnout)" if self.drm_protection else "Ne (lze stáhnout)",
+            ]
+        )
         if clear_terminal:
             print("\033[H\033[J", end="")
         print(t)
@@ -311,9 +326,18 @@ class CT:
         except Exception as e:
             raise CT_Error(f"Nepodařilo se získat adresu videa na serveru.", e)
 
+    def _checkDRM(self) -> bool:
+        """Checks if video is DRM protected"""
+        try:
+            return self.playlist_info["error"]["type"] == "ResourceLicenceError"
+        except Exception:
+            return False
+
     def _getName(self, name: str | None) -> str:
         """Gets name of the video on CT"""
         if name is None or name == "":
+            if self.drm_protection:
+                return "-"
             return self.playlist_info["title"]
         return name
 
@@ -346,6 +370,11 @@ class CT:
 
     def download(self, subs: bool = False, keep_original: bool = False) -> None:
         """Downloads video stream in best quality and converts it"""
+        # DRM
+        if self.drm_protection:
+            print("Video je zabezpečené DRM. Nelze stáhnout.")
+            return
+
         # TEMPORARY DIRECTORY
         temp_dir: str = os.path.join(
             self.directory, "temp_" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
