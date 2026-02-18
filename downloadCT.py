@@ -67,6 +67,7 @@ class Media:
         except:
             raise CT_Error("Can't write segment")
 
+    @staticmethod
     def mergeAudioAndVideo(video_path: str, audio_path: str, output_path: str) -> None:
         """Merges audio and video"""
         command: str = (
@@ -88,6 +89,7 @@ class Video(Media):
         codecs: str,
         width: int,
         height: int,
+        sar: str,
         bandwidth: int,
     ) -> None:
         """Initializies ``Video`` class"""
@@ -95,6 +97,7 @@ class Video(Media):
         self.codecs: str = codecs
         self.width: int = width
         self.height: int = height
+        self.sar:str = sar
         self.bandwidth: int = bandwidth
 
 
@@ -146,7 +149,7 @@ class MPDParser:
     def __init__(self, mpd: str) -> None:
         """Initializies ``MPDParser`` class"""
         self.mpd: str = mpd
-        self.base_url: str | None = None
+        self.base_url: str = ""
         self.videos: list[Video] = []
         self.audios: list[Audio] = []
         self._parse()
@@ -190,6 +193,7 @@ class MPDParser:
             codecs=attributes["codecs"],
             width=int(attributes["width"]),
             height=int(attributes["height"]),
+            sar=attributes["sar"],
             bandwidth=int(attributes["bandwidth"]),
         )
 
@@ -210,7 +214,7 @@ class CT:
     """CT downloader
     - can download video only using url (noob friendly)"""
 
-    VALID_URLS: str = [r"https://www.ceskatelevize.cz/"]
+    VALID_URLS: list[str] = [r"https://www.ceskatelevize.cz/", r"https://zlatapraha.ceskatelevize.cz/"]
     PLAYLIST_INFO: str = (
         r"https://api.ceskatelevize.cz/video/v1/playlist-vod/v1/stream-data/media/external/"
     )
@@ -227,16 +231,16 @@ class CT:
         self.valid_name: str = self._getValidName(self.name)
         if self.drm_protection:
             self.subtitles: list[Subtitle] = []
-            self.mpd_parser: MPDParser = None
+            self.mpd_parser: MPDParser = MPDParser("")
             self.audios: list[Audio] = []
             self.videos: list[Video] = []
             return
         self.subtitles: list[Subtitle] = self._getSubs()
         self.mpd_parser: MPDParser = self._getMPD()
-        self.audios: list[Audio] = sorted(
+        self.videos: list[Video] = sorted(
             self.mpd_parser.videos, key=lambda v: (v.height, v.bandwidth), reverse=True
         )
-        self.videos: list[Video] = sorted(
+        self.audios: list[Audio] = sorted(
             self.mpd_parser.audios,
             key=lambda a: (a.bandwidth, a.audioSamplingRate),
             reverse=True,
@@ -284,7 +288,7 @@ class CT:
         if response.status_code != 200:
             raise CT_Error(
                 f"Nemohl jsem se dostat na web. Zkontroluj připojení k internetu nebo správnost url.",
-                response.status_code,
+                f"Status code: {response.status_code}",
             )
         return BeautifulSoup(response.text, "html.parser")
 
@@ -299,24 +303,39 @@ class CT:
 
     def _getID(self) -> str:
         """Gets id of the video"""
-        try:
-            script: Tag = self.source_code.find_all(
-                "script", {"type": "application/ld+json"}
-            )[1]
-        except IndexError:
-            raise CT_Error("Nenašel jsem ID-script v source codu.")
-        except Exception as e:
-            raise CT_Error(
-                f"Hledání ID-scriptu selhalo. Struktura stránky se mohla změnit", e
-            )
-        try:
-            contents: dict = json.loads(script.contents[0])
-            embed_url: str = contents["video"]["embedUrl"]
-            return embed_url.split("IDEC=")[1]
-        except ValueError:
-            raise CT_Error("Nenašel jsem id ve scriptu.")
-        except Exception as e:
-            raise CT_Error("Hledání ID selhalo. Struktura skriptu se mohla změnit.", e)
+        #NORMAL
+        if self.url.startswith("https://www.ceskatelevize.cz"):
+            try:
+                script: Tag = self.source_code.find_all(
+                    "script", {"type": "application/ld+json"}
+                )[1]
+            except IndexError:
+                raise CT_Error("Nenašel jsem ID-script v source codu.")
+            except Exception as e:
+                raise CT_Error(
+                    f"Hledání ID-scriptu selhalo. Struktura stránky se mohla změnit", str(e)
+                )
+            try:
+                contents: dict = json.loads(script.contents[0])
+                embed_url: str = contents["video"]["embedUrl"]
+                return embed_url.split("IDEC=")[1]
+            except ValueError:
+                raise CT_Error("Nenašel jsem id ve scriptu.")
+            except Exception as e:
+                raise CT_Error("Hledání ID selhalo. Struktura skriptu se mohla změnit.", str(e))
+        #GOLD
+        elif self.url.startswith("https://zlatapraha.ceskatelevize.cz/"):
+            iframes: list[Tag] = self.source_code.find_all("iframe")
+            for iframe in iframes:
+                try:
+                    source: str = iframe["src"]
+                    if source.startswith("https://player.ceskatelevize.cz/?videoId="):
+                        return source.split("videoId=")[1].split("&origin=zlatapraha")[0]
+                except Exception:
+                    pass
+            raise CT_Error("Nenašel jsem id v iframu.")
+        raise CT_Error("Nenašel jsem id.")
+
 
     def _getPlaylistInfo(self) -> dict:
         """Returns dictionary full of information about video"""
@@ -324,7 +343,7 @@ class CT:
             r = requests.get(self.PLAYLIST_INFO + self.id, timeout=60)
             return json.loads(r.text)
         except Exception as e:
-            raise CT_Error(f"Nepodařilo se získat adresu videa na serveru.", e)
+            raise CT_Error(f"Nepodařilo se získat adresu videa na serveru.", str(e))
 
     def _checkDRM(self) -> bool:
         """Checks if video is DRM protected"""
@@ -365,7 +384,7 @@ class CT:
         mpd_link: str = self.playlist_info["streams"][-1]["url"]
         r = requests.get(mpd_link, timeout=60)
         if r.status_code != 200:
-            raise CT_Error(f"Can't get mpd file. Status code: {r.status_code}")
+            raise CT_Error("Can't get mpd file.", f"Status code: {r.status_code}")
         return MPDParser(r.text)
 
     def download(self, subs: bool = False, keep_original: bool = False) -> None:
@@ -413,61 +432,4 @@ class CT:
             try:
                 sub.download(self.valid_name, self.directory)
             except CT_Error as e:
-                raise CT_Error(
-                    f"Nemohl jsem stáhnout titulky ve formátu {sub.format}. Chyba: {e}"
-                )
-
-    def _txtToSrt(self, source: str) -> str:
-        """Converts subtitle contents into ``srt`` format"""
-
-        def seconds(milliseconds: str) -> str:
-            """Converts miliseconds to ``srt format``"""
-            seconds, milliseconds = divmod(milliseconds, 1000)
-            minutes, seconds = divmod(seconds, 60)
-            hours, minutes = divmod(minutes, 60)
-            srt_time = f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
-            return srt_time
-
-        lines = source.split("\n")
-        start: bool = True
-        srt_file: str = ""
-        for line in lines:
-            if start and line != "":
-                index: str = line.strip().split(";")[0]
-                start_time, end_time = line.strip().split(" ")[1:]
-                # Convert start and end times to SRT format (HH:MM:SS,ms)
-                start_time = seconds(int(start_time))
-                end_time = seconds(int(end_time))
-                srt_file += f"{index}\n{start_time} --> {end_time}\n"
-                start = False
-            else:
-                if line == "":
-                    start = True
-                    srt_file += "\n"
-                    continue
-                srt_file += line + "\n"
-        return srt_file
-
-
-class CT_Gold(CT):
-    """CT Gold downloader
-    - can download video only using url (noob friendly)"""
-
-    VALID_URLS: str = [r"https://zlatapraha.ceskatelevize.cz/"]
-    PLAYLIST_INFO: str = (
-        r"https://api.ceskatelevize.cz/video/v1/playlist-vod/v1/stream-data/media/external/"
-    )
-
-    def __init__(self, url: str, directory: str, name: str | None = None) -> None:
-        super().__init__(url, directory, name)
-
-    def _getID(self):
-        iframes: list[Tag] = self.source_code.find_all("iframe")
-        for iframe in iframes:
-            try:
-                source: str = iframe["src"]
-                if source.startswith("https://player.ceskatelevize.cz/?videoId="):
-                    return source.split("videoId=")[1].split("&origin=zlatapraha")[0]
-            except Exception:
-                pass
-        raise CT_Error("Can't find video ID")
+                raise CT_Error(f"Nemohl jsem stáhnout titulky ve formátu {sub.format}.", str(e))

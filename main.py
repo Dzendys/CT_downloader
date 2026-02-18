@@ -1,5 +1,5 @@
 import sys
-from downloadCT import CT, CT_Gold, CT_Error
+from downloadCT import CT, CT_Error
 from tkinter.filedialog import askdirectory
 
 
@@ -25,12 +25,7 @@ if DIRECTORY == "":
     input()
     sys.exit()
 
-if URL.startswith("https://www.ceskatelevize.cz"):  # NORMAL
-    ct: CT = CT(url=URL, directory=DIRECTORY, name=NAME)
-
-elif URL.startswith("https://zlatapraha.ceskatelevize.cz/"):  # GOLD
-    ct: CT_Gold = CT_Gold(url=URL, directory=DIRECTORY, name=NAME)
-
+ct: CT = CT(url=URL, directory=DIRECTORY, name=NAME)
 ct.displayInfo(clear_terminal=True)
 
 try:
@@ -38,5 +33,5 @@ try:
 except CT_Error as e:
     print(f"Nastala očekávaná chyba!\n{e}\nDetail: {e.details}\n\nZavolej Honzu!")
 except Exception as e:
-    print(f"Nastala neočekávaná chyba!\n{e}\nDetail: {e.details}\n\nZavolej Honzu!")
+    print(f"Nastala neočekávaná chyba!\n{e}\nDetail: {str(e)}\n\nZavolej Honzu!")
 input()
